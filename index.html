@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>local weather · no api</title>
+    <title>breeze · real weather</title>
     <style>
         * {
             margin: 0;
@@ -243,17 +243,6 @@
             padding-top: 16px;
         }
 
-        .mock-note {
-            background: #2b5a70;
-            border-radius: 60px;
-            padding: 8px 16px;
-            font-size: 0.85rem;
-            text-align: center;
-            color: #d5f0ff;
-            border: 1px solid #89c2d9;
-            margin-bottom: 16px;
-        }
-
         .error-msg {
             background: #b43b3b80;
             border-radius: 40px;
@@ -264,28 +253,36 @@
             margin-bottom: 16px;
             display: none;
         }
+
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
     <div class="weather-panel">
         <h1>
             ⛅ breeze 
-            <span class="badge">NO API • SIMULATED</span>
+            <span class="badge">OPENWEATHERMAP</span>
         </h1>
-        <div class="sub">real‑time look, zero external calls</div>
+        <div class="sub">real‑time weather from around the globe</div>
 
         <div class="search-row">
             <div class="input-group">
                 <i>🔍</i>
-                <input type="text" id="cityInput" placeholder="city (e.g. Paris, Tokyo)" value="New York">
+                <input type="text" id="cityInput" placeholder="city (e.g. Paris, Tokyo)" value="London">
             </div>
             <button id="searchBtn">check</button>
             <button id="surpriseBtn" class="surprise-btn" title="random city">🎲</button>
-        </div>
-
-        <!-- mock data notice -->
-        <div class="mock-note">
-            ⚡ all weather data is locally generated — no real api used
         </div>
 
         <div id="errorMsg" class="error-msg"></div>
@@ -294,40 +291,44 @@
         <div class="weather-card" id="weatherDisplay">
             <div class="city-head">
                 <span>📍</span>
-                <span class="city-name" id="cityDisplay">New York</span>
+                <span class="city-name" id="cityDisplay">--</span>
             </div>
             <div class="temp-section">
-                <div class="temp-main" id="tempDisplay">23<span>°C</span></div>
+                <div class="temp-main" id="tempDisplay">--<span>°C</span></div>
                 <div class="weather-icon" id="iconDisplay">☀️</div>
             </div>
             <div class="detail-grid">
                 <div class="metric">
                     <div class="metric-label">feels like</div>
-                    <div class="metric-value" id="feelsLike">21<small>°C</small></div>
+                    <div class="metric-value" id="feelsLike">--<small>°C</small></div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">humidity</div>
-                    <div class="metric-value" id="humidity">62<small>%</small></div>
+                    <div class="metric-value" id="humidity">--<small>%</small></div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">wind</div>
-                    <div class="metric-value" id="wind">14<small>km/h</small></div>
+                    <div class="metric-value" id="wind">--<small>km/h</small></div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">condition</div>
-                    <div class="metric-value" id="condition">clear</div>
+                    <div class="metric-value" id="condition">--</div>
                 </div>
             </div>
         </div>
 
         <div class="footnote">
-            🌱 purely frontend simulation · every search gives fresh fake data
+            🌐 data provided by OpenWeatherMap · your API key is active
         </div>
     </div>
 
     <script>
         (function() {
-            // ----- DOM elements -----
+            // ---------- CONFIG ----------
+            const API_KEY = '452c8fbc8b05c444b7d0858abe1d76a9';  // your key
+            const BASE_URL = 'https://api.openweathermap.org/data/2.5/weather';
+
+            // ---------- DOM elements ----------
             const cityInput = document.getElementById('cityInput');
             const searchBtn = document.getElementById('searchBtn');
             const surpriseBtn = document.getElementById('surpriseBtn');
@@ -340,7 +341,7 @@
             const condition = document.getElementById('condition');
             const errorMsg = document.getElementById('errorMsg');
 
-            // ----- helper: hide error, show weather -----
+            // ---------- helper: hide/show error ----------
             function clearError() {
                 errorMsg.style.display = 'none';
                 errorMsg.innerText = '';
@@ -351,80 +352,94 @@
                 errorMsg.style.display = 'block';
             }
 
-            // ----- generate random weather data for a given city name (string) -----
-            function generateMockWeather(city) {
-                // random seed based on city name + current minute to vary results
-                const now = new Date();
-                const seed = (city.length * 7 + now.getHours() * 3 + now.getMinutes()) % 100;
-
-                // temperature between -5 and 38 with some variation
-                const baseTemp = 10 + (seed * 0.5) % 28; // 10..38
-                const temp = Math.round(baseTemp * 10) / 10;
-
-                // feels like: slightly adjust
-                const feels = temp + (Math.random() * 4 - 2).toFixed(1);
+            // ---------- map OpenWeather condition codes to emoji + text ----------
+            function mapWeatherCode(iconCode, description) {
+                // iconCode examples: '01d' (clear day), '01n' (clear night), '10d' (rain), etc.
+                // we'll use the description as fallback, but also map by icon prefix
+                const mainIcon = iconCode ? iconCode.substring(0, 2) : '01';
                 
-                // humidity 30% - 90%
-                const hum = Math.round(30 + (seed * 0.8) % 60);
+                const map = {
+                    '01': { emoji: '☀️', text: 'clear sky' },      // clear
+                    '02': { emoji: '🌤️', text: 'few clouds' },    // few clouds
+                    '03': { emoji: '☁️', text: 'scattered clouds' },
+                    '04': { emoji: '☁️', text: 'broken clouds' },
+                    '09': { emoji: '🌧️', text: 'shower rain' },
+                    '10': { emoji: '🌦️', text: 'rain' },
+                    '11': { emoji: '⛈️', text: 'thunderstorm' },
+                    '13': { emoji: '🌨️', text: 'snow' },
+                    '50': { emoji: '🌫️', text: 'mist' }
+                };
                 
-                // wind 0 - 35 km/h
-                const windSpd = Math.round((seed % 35) + Math.random() * 5);
-
-                // weather condition & icon based on temperature & randomness
-                const conditions = [
-                    { emoji: '☀️', text: 'sunny' },
-                    { emoji: '⛅', text: 'partly cloudy' },
-                    { emoji: '☁️', text: 'cloudy' },
-                    { emoji: '🌧️', text: 'rain' },
-                    { emoji: '⛈️', text: 'storm' },
-                    { emoji: '🌨️', text: 'snow' },
-                    { emoji: '🌫️', text: 'fog' },
-                    { emoji: '💨', text: 'windy' }
-                ];
-
-                // pick an index based on city name and minute
-                let condIndex = Math.floor((seed + city.length) % conditions.length);
-                // if temperature below 2, maybe snow bias
-                if (temp < 2 && condIndex < 4) condIndex = 5; // snow
-                else if (temp > 30 && condIndex > 3) condIndex = 0; // sunny
-
-                const chosen = conditions[condIndex];
-
+                const fallback = map[mainIcon] || { emoji: '🌈', text: description || 'unknown' };
                 return {
-                    city: city.trim() || 'Unknown',
-                    temperature: temp,
-                    feelsLike: Math.round((feels + Number.EPSILON) * 10) / 10,
-                    humidity: hum,
-                    wind: windSpd,
-                    emoji: chosen.emoji,
-                    conditionText: chosen.text,
+                    emoji: fallback.emoji,
+                    text: description || fallback.text
                 };
             }
 
-            // ----- update UI with mock data object -----
-            function updateUI(weather) {
-                cityDisplay.innerText = weather.city;
-                tempDisplay.innerHTML = Math.round(weather.temperature) + '<span>°C</span>';
-                feelsLike.innerHTML = Math.round(weather.feelsLike) + '<small>°C</small>';
-                humidity.innerHTML = weather.humidity + '<small>%</small>';
-                wind.innerHTML = weather.wind + '<small>km/h</small>';
-                iconDisplay.innerText = weather.emoji;
-                condition.innerText = weather.conditionText;
+            // ---------- update UI with real API data ----------
+            function updateUI(data) {
+                // data is the parsed JSON from OpenWeather
+                const name = data.name + (data.sys.country ? `, ${data.sys.country}` : '');
+                cityDisplay.innerText = name;
+
+                const temp = Math.round(data.main.temp);
+                tempDisplay.innerHTML = temp + '<span>°C</span>';
+
+                const feels = Math.round(data.main.feels_like);
+                feelsLike.innerHTML = feels + '<small>°C</small>';
+
+                humidity.innerHTML = data.main.humidity + '<small>%</small>';
+
+                // wind speed (convert from m/s to km/h: 1 m/s = 3.6 km/h)
+                const windKmh = Math.round(data.wind.speed * 3.6);
+                wind.innerHTML = windKmh + '<small>km/h</small>';
+
+                // weather icon & description
+                const weather = data.weather[0];
+                const { emoji, text } = mapWeatherCode(weather.icon, weather.description);
+                iconDisplay.innerText = emoji;
+                condition.innerText = text;
             }
 
-            // ----- main action: generate mock for input city -----
-            function showWeatherForCity(cityName) {
-                if (!cityName || cityName.trim() === '') {
-                    showError('please enter a city name');
-                    return false;
+            // ---------- fetch real weather for a city ----------
+            async function fetchWeather(city) {
+                if (!city.trim()) {
+                    showError('Please enter a city name');
+                    return;
                 }
                 clearError();
-                const mock = generateMockWeather(cityName.trim());
-                updateUI(mock);
-                return true;
+
+                // optional: simple loading state (disable button, show spinner)
+                searchBtn.disabled = true;
+                searchBtn.innerHTML = '<span class="loader"></span> loading';
+                
+                try {
+                    const url = `${BASE_URL}?q=${encodeURIComponent(city)}&appid=${API_KEY}&units=metric`;
+                    const response = await fetch(url);
+                    
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            throw new Error(`City "${city}" not found`);
+                        } else if (response.status === 401) {
+                            throw new Error('Invalid API key');
+                        } else {
+                            throw new Error(`HTTP error ${response.status}`);
+                        }
+                    }
+                    
+                    const data = await response.json();
+                    updateUI(data);
+                } catch (err) {
+                    showError(err.message);
+                } finally {
+                    // restore button
+                    searchBtn.disabled = false;
+                    searchBtn.innerHTML = 'check';
+                }
             }
 
-            // ----- surprise me: pick a random city from a list -----
+            // ---------- surprise: random city from list ----------
             function surpriseCity() {
                 const cities = [
                     'Tokyo', 'Paris', 'Sydney', 'Cairo', 'Moscow', 
@@ -434,27 +449,25 @@
                 ];
                 const random = cities[Math.floor(Math.random() * cities.length)];
                 cityInput.value = random;
-                showWeatherForCity(random);
+                fetchWeather(random);
             }
 
-            // ----- event listeners -----
+            // ---------- event listeners ----------
             searchBtn.addEventListener('click', () => {
-                showWeatherForCity(cityInput.value);
+                fetchWeather(cityInput.value);
             });
 
             cityInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
-                    showWeatherForCity(cityInput.value);
+                    fetchWeather(cityInput.value);
                 }
             });
 
             surpriseBtn.addEventListener('click', surpriseCity);
 
-            // ----- initial load (New York) -----
-            // ensure default city is shown
+            // ---------- initial load (London) ----------
             window.addEventListener('load', () => {
-                // generate for "New York" (already in input)
-                showWeatherForCity('New York');
+                fetchWeather('London');
             });
         })();
     </script>
